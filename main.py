@@ -1,5 +1,5 @@
-import numpy as np
 import pandas as pd
+from random import random
 
 
 class Node:
@@ -154,10 +154,6 @@ def create_probabilities_network(my_network, data):
                     1 - node.cpt[f'F{parent1.kc_id}, F{parent2.kc_id}, High']
 
 
-
-
-
-
 def load_data(f_name="./res/data.csv"):
     """
     Load and pre-process the data.
@@ -218,9 +214,69 @@ def process_data(data: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(processed_data)
 
 
-if __name__ == "__main__":
-    data = load_data()
-    my_network = create_network_structure([8232, 8234, 8240], 0)
-    processed_data = process_data(data)
-    tables = create_probabilities_network(my_network, processed_data)
+def find_most_frugal(my_network, hyp_node_key, N):
+    """
+    Find the most frugal explanation by sampling random nodes to be relevant.
 
+    Return the nodes that are seen to be relevant the most in the most
+    frugal explanation.
+
+    Parameters
+    ----------
+    my_network: Dict of Nodes
+        The Bayesian network
+    hyp_node_key: str
+        The id of the hypothesis node
+    N: int
+        The amount of samples we use.
+
+    Returns
+    -------
+    list of Nodes:
+        The intermediate nodes that are relevant
+    """
+    # Define type of nodes
+    intermediate_node_keys = [key for key in my_network.keys
+                              if "master" in key and key != hyp_node_key]
+    evidence_node_keys = [key for key in my_network.keys if "correct" in key]
+
+    selected_relevant = {}
+    for n in range(N):
+        # Create random irrelevant or relevant nodes
+        relevant_node_keys = []
+        irrelevant_node_keys = []
+        for node in intermediate_node_keys:
+            if random() > .5:
+                relevant_node_keys.append(node)
+            else:
+                irrelevant_node_keys.append(node)
+    # TODO: Determine Hmax
+    # TODO?: set evidence to a value
+    most_selected_relevant = selected_relevant[selected_relevant.keys[0]]
+    for key in selected_relevant.keys():
+        if len(most_selected_relevant) < len(selected_relevant[key]):
+            most_selected_relevant = selected_relevant[key]
+    return most_selected_relevant
+
+if __name__ == "__main__":
+    # Load the data
+    quick_load = True
+    if quick_load is False:
+        data = load_data()
+        processed_data = process_data(data)
+        processed_data.to_csv("./res/processed_data.csv")
+    else:
+        processed_data = pd.read_csv("./res/processed_data.csv")
+
+    # Set up variables
+    hyp_id = 0
+    N = 25
+    kcs = [8232, 8234, 8240]
+    hyp_key = f"master_{kcs[hyp_id]}"
+
+    # Set up the network
+    my_network = create_network_structure(kcs, hyp_id)
+    create_probabilities_network(my_network, processed_data)
+
+    # Find relevant nodes
+    most_relevant = find_most_frugal(my_network, hyp_key, N)
