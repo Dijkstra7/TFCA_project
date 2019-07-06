@@ -2,12 +2,16 @@ import pandas as pd
 from random import random, choice
 
 
-eff = 50
-mg = .5
+eff = 120
+mg = .3
 
 class Node:
 
-    def __init__(self, kc_id, poss_values=None):
+    current_letter = 0
+    letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    current_factor = 1
+
+    def __init__(self, kc_id, poss_values=None, type_ = "master"):
         """
         Initialize the node.
 
@@ -22,13 +26,37 @@ class Node:
             self.poss_values = poss_values
         self.parents = []
         self.children = []
-        self.cpt = {}
+        self.cpt = []
         self.kc_id = kc_id
+        self.id_ = f"{type_}_{kc_id}"
         self.value = None
+        self.lid = Node.letters[Node.current_letter]
+        Node.current_letter += 1
 
     def set_value(self, value):
         self.value = value
-        self.cpt = {self.cpt[value]}
+        # self.cpt = {self.cpt[value]}
+
+    def create_factor(self):
+        factors = self.cpt
+        if self.value is not None:
+            if self.value is True:
+                factors = [fac for fac in factors if '~' not in fac[0][0]]
+            elif self.value is False:
+                factors = [fac for fac in factors if '~' in fac[0][0]]
+        for p_id, parent in enumerate(self.parents):
+            parent = self.parents[p_id]
+            if parent.value is not None:
+                if parent.value is True:
+                    factors = [fac for fac in factors
+                               if '~' not in fac[0][p_id + 1]]
+                else:
+                    factors = [fac for fac in factors
+                               if '~' in fac[0][p_id + 1]]
+        Node.current_factor += 1
+        return [f'F{Node.current_factor -1}', factors]
+
+
 
 
 def create_network_structure(kcs: list, hypothesis_node_id: int) -> dict:
@@ -53,7 +81,8 @@ def create_network_structure(kcs: list, hypothesis_node_id: int) -> dict:
         if kc_id != hypothesis_node_id:  # Exclude the hypothesis node
             # Create nodes
             network[f"master_{kc}"] = Node(kc, poss_values=["T", "F"])
-            network[f"effort_{kc}"] = Node(kc, poss_values=["High", "Low"])
+            network[f"effort_{kc}"] = Node(kc, poss_values=["High", "Low"],
+                                           type_="effort")
 
             # Create connections
             network[f"master_{kc}"].parents.append(network[f"effort_{kc}"])
@@ -80,97 +109,91 @@ def create_probabilities_network(my_network, data):
     -------
     None
     """
-    for node_key in my_network.keys():
-        if "master" in node_key:
-            node = my_network[node_key]
-            if len(node.parents) == 0:  # Skip the hypothesis node
-                select = data.loc[data.kc == node.kc_id]
-                total = len(select)
-                part = len(select.loc[select.mastering_grade >= mg])
-                probability = round(part / total, 4)
-                node.cpt = {'T': probability,
-                            'F': 1-probability}
-
+    print(data.tail(len(data)))
     for node_key in my_network.keys():
         if "effort" in node_key:
             node = my_network[node_key]
-            select = data.loc[data.kc == node.kc_id]
-            true = len(select.loc[select.mastering_grade >= mg])
-            true_high = len(select.loc[
-                                (select.mastering_grade >= mg) &
-                                (select.effort >= eff)
-                            ]) / true
-            false = len(select.loc[select.mastering_grade < mg])
-            false_high = len(select.loc[
-                                (select.mastering_grade < mg) &
-                                (select.effort < eff)
-                            ]) / false
-            node.cpt = {f'T{node.kc_id}, High': true_high,
-                        f'T{node.kc_id}, Low': 1 - true_high,
-                        f'F{node.kc_id}, High': false_high,
-                        f'F{node.kc_id}, Low': 1 - false_high}
+            total = len(data)
+            part = len(data.loc[data[f"effort_{node.kc_id}"] >= eff])
+            probability = round(part / total, 4)
+            node.cpt = [[[node.lid], probability],
+                        [[f'~{node.lid}'], 1-probability]]
 
     for node_key in my_network.keys():
         if "master" in node_key:
             node = my_network[node_key]
-            if len(node.children) == 0:
+            if len(node.children) != 0:  # Skip the hypothesis node
+                high = len(data.loc[data[f"effort_{node.kc_id}"] >= eff])
+                high_true = len(data.loc[
+                                    (data[f"mastering_{node.kc_id}"] >= mg) &
+                                    (data[f"effort_{node.kc_id}"] >= eff)
+                                    ]) / high
+                low = len(data.loc[data[f"effort_{node.kc_id}"] < eff])
+                low_true = len(data.loc[
+                                     (data[f"mastering_{node.kc_id}"] >= mg) &
+                                     (data[f"effort_{node.kc_id}"] < eff)
+                                     ]) / low
+                node.cpt = [[[f'{node.lid}', f'{node.parents[0].lid}'],
+                             high_true],
+                            [[f'~{node.lid}', f'{node.parents[0].lid}'],
+                             1 - high_true],
+                            [[f'{node.lid}', f'~{node.parents[0].lid}'],
+                              low_true],
+                            [[f'~{node.lid}', f'~{node.parents[0].lid}'],
+                              1 - low_true]]
+
+    for node_key in my_network.keys():
+        if "master" in node_key:
+            node = my_network[node_key]
+            if len(node.children) == 0:  # Only hypothesis node
                 # When having more than two parents, this should be 
                 # optimized using a recurrent calculation
                 parent1 = node.parents[0]
                 parent2 = node.parents[1]
-                set_ = data.loc[((data.kc == parent1.kc_id) &
-                                    (data.mastering_grade >= mg)) |
-                                   ((data.kc == parent2.kc_id) &
-                                    (data.mastering_grade >= mg)) |
-                                   (data.kc == node.kc_id)
-                                   ]
-                p1t_p2t_high = len(set_.loc[~((set_.kc == node.kc_id) &
-                                                 (set_.effort < eff))]) / \
-                               len(set_)
-                node.cpt[f'T{parent1.kc_id}, T{parent2.kc_id}, T'] = \
-                    p1t_p2t_high
+                set_ = data.loc[(data[f"mastering_{parent1.kc_id}"] >= mg) &
+                                (data[f"mastering_{parent2.kc_id}"] >= mg)
+                                ]
+                p1t_p2t_high = len(set_.loc[
+                                       set_[f"mastering_{node.kc_id}"] >= mg
+                                   ]) / (len(set_) + 1e-12)
+                node.cpt.append([[f'{node.lid}', f'{parent1.lid}',
+                                   f'{parent2.lid}'], p1t_p2t_high])
                 
-                set_ = data.loc[((data.kc == parent1.kc_id) &
-                                    (data.mastering_grade < mg)) |
-                                   ((data.kc == parent2.kc_id) &
-                                    (data.mastering_grade >= mg))
-                                   ]
-                p1f_p2t_high = len(set_.loc[~((set_.kc == node.kc_id) &
-                                                 (set_.effort < eff))]) / \
-                               len(set_)
-                node.cpt[f'F{parent1.kc_id}, T{parent2.kc_id}, T'] = \
-                    p1f_p2t_high
+                set_ = data.loc[(data[f"mastering_{parent1.kc_id}"] < mg) &
+                                (data[f"mastering_{parent2.kc_id}"] >= mg)
+                                ]
+                p1f_p2t_high = len(set_.loc[
+                                       set_[f"mastering_{node.kc_id}"] >= mg
+                                   ]) / (len(set_) + 1e-12)
+                node.cpt.append([[f'{node.lid}', f'~{parent1.lid}',
+                                  f'{parent2.lid}'], p1f_p2t_high])
 
-                set_ = data.loc[((data.kc == parent1.kc_id) &
-                                    (data.mastering_grade >= mg)) |
-                                   ((data.kc == parent2.kc_id) &
-                                    (data.mastering_grade < mg))
-                                   ]
-                p1t_p2f_high = len(set_.loc[~((set_.kc == node.kc_id) &
-                                                 (set_.effort < eff))]) / \
-                               len(set_)
-                node.cpt[f'T{parent1.kc_id}, F{parent2.kc_id}, T'] = \
-                    p1t_p2f_high
+                set_ = data.loc[(data[f"mastering_{parent1.kc_id}"] >= mg) &
+                                (data[f"mastering_{parent2.kc_id}"] < mg)
+                                ]
+                p1t_p2f_high = len(set_.loc[
+                                       set_[f"mastering_{node.kc_id}"] >= mg
+                                   ]) / (len(set_) + 1e-12)
+                node.cpt.append([[f'{node.lid}', f'{parent1.lid}',
+                                  f'~{parent2.lid}'], p1t_p2f_high])
 
-                set_ = data.loc[((data.kc == parent1.kc_id) &
-                                    (data.mastering_grade < mg)) |
-                                   ((data.kc == parent2.kc_id) &
-                                    (data.mastering_grade < mg))
-                                   ]
-                p1f_p2f_high = len(set_.loc[~((set_.kc == node.kc_id) &
-                                                 (set_.effort < eff))]) / \
-                               len(set_)
-                node.cpt[f'F{parent1.kc_id}, F{parent2.kc_id}, T'] = \
-                    p1f_p2f_high
+                set_ = data.loc[(data[f"mastering_{parent1.kc_id}"] < mg) &
+                                (data[f"mastering_{parent2.kc_id}"] < mg)
+                                ]
+                p1f_p2f_high = len(set_.loc[
+                                       set_[f"mastering_{node.kc_id}"] >= mg
+                                   ]) / (len(set_) + 1e-12)
+                node.cpt.append([[f'{node.lid}', f'~{parent1.lid}',
+                                  f'~{parent2.lid}'], p1f_p2f_high])
 
-                node.cpt[f'T{parent1.kc_id}, T{parent2.kc_id}, F'] = \
-                    1 - node.cpt[f'T{parent1.kc_id}, T{parent2.kc_id}, T']
-                node.cpt[f'T{parent1.kc_id}, F{parent2.kc_id}, F'] = \
-                    1 - node.cpt[f'T{parent1.kc_id}, F{parent2.kc_id}, T']
-                node.cpt[f'F{parent1.kc_id}, T{parent2.kc_id}, F'] = \
-                    1 - node.cpt[f'F{parent1.kc_id}, T{parent2.kc_id}, T']
-                node.cpt[f'F{parent1.kc_id}, F{parent2.kc_id}, F'] = \
-                    1 - node.cpt[f'F{parent1.kc_id}, F{parent2.kc_id}, T']
+                node.cpt.append([[f'~{node.lid}', f'{parent1.lid}',
+                                 f'{parent2.lid}'], 1 - node.cpt[0][1]])
+                node.cpt.append([[f'~{node.lid}', f'{parent1.lid}',
+                                 f'~{parent2.lid}'], 1 - node.cpt[1][1]])
+                node.cpt.append([[f'~{node.lid}', f'~{parent1.lid}',
+                                 f'{parent2.lid}'], 1 - node.cpt[2][1]])
+                node.cpt.append([[f'~{node.lid}', f'~{parent1.lid}',
+                                 f'~{parent2.lid}'], 1 - node.cpt[3][1]])
 
 
 def load_data(f_name="./res/data.csv"):
@@ -209,27 +232,32 @@ def process_data(data: pd.DataFrame) -> pd.DataFrame:
     Pandas.DataFrame
         a DataFrame containing the processed data per student.
     """
-    processed_data = {"student_id": [], "kc": [], "mastering_grade": [],
-                      "effort": []}
-    for student in data.student_id.unique():
-        for kc in [8232, 8234, 8240]:
+    processed_data = {"student_id": []}
+    for kc in [8232, 8234, 8240]:
+        processed_data[f"effort_{kc}"] = []
+        processed_data[f"mastering_{kc}"] = []
+        for student in data.student_id.unique():
             select = data.loc[(data.student_id == student) &
                               (data.kc == kc)]
             # Get last ability score to find out the current mastering grade
             mastering = select.mastering.iloc[-1]
 
             # Calculate percentage of effort answers
-            print(select.effort.values)
-            print("======")
             effort = len(select)
 
             # Add new row of data
-            processed_data["student_id"].append(student)
-            processed_data["kc"].append(kc)
-            processed_data["mastering_grade"].append(mastering)
-            processed_data["effort"].append(effort)
+            if kc == 8232:  # Only once per all kc's
+                processed_data["student_id"].append(student)
+            processed_data[f"mastering_{kc}"].append(mastering)
+            processed_data[f"effort_{kc}"].append(effort)
 
     return pd.DataFrame(processed_data)
+
+
+def reduce_factor(factors, letter):
+    # TODO Fix reduce factor method
+    Node.current_factor += 1
+    return([f'F{Node.current_factor}', [letter]])
 
 
 def find_most_frugal(my_network, hyp_node_key, N):
@@ -260,6 +288,7 @@ def find_most_frugal(my_network, hyp_node_key, N):
 
     selected_relevant = {}
     for n in range(N):
+        Node.current_factor = 0
         # Create random irrelevant or relevant nodes
         relevant_node_keys = []
         irrelevant_node_keys = []
@@ -270,16 +299,39 @@ def find_most_frugal(my_network, hyp_node_key, N):
                 irrelevant_node_keys.append(node_key)
                 i_node = my_network[node_key]
                 # Set random value to irrelevant node
-                i_node.set_value = choice(i_node.poss_values)
-                print(f"set node master_{i_node.kc_id} to {i_node.set_value}")
+                i_node.set_value(choice([True, False]))
+                print(f"set node {i_node.id_} ({i_node.lid}) to "
+                      f"{i_node.value}")
 
         # Randomly determine the evidence variables
         for node_key in evidence_node_keys:
             e_node = my_network[node_key]
-            e_node.set_value = choice(e_node.poss_values)
-            print(f"set node effort_{e_node.kc_id} to {e_node.set_value}")
+            e_node.set_value(choice([True, False]))
+            print(f"set node {e_node.id_} ({e_node.lid}) to "
+                  f"{e_node.value}")
+
+        factors = []
+        for node_key in my_network.keys():
+            factors.append(my_network[node_key].create_factor())
+        print("Starting with factors:")
+        for factor in factors:
+            print(factor)
+        for reduce_letter in "ECBDA":
+            red_factor = []
+            for factor in factors:
+                if reduce_letter in factor[1][0][0] or '~'+reduce_letter in \
+                        factor[1][0][0]:
+                    red_factor.append(factor)
+            factors.append(reduce_factor(red_factor, reduce_letter))
+            for factor in red_factor:
+                factors.remove(factor)
+            print(f"Reducing factors: {[f[0] for f in red_factor]}")
+            print(f"factors left: {[f[0] for f in factors]}")
 
         # TODO: Determine Hmax
+        for factor in factors:
+            print(factor)
+        print("=====")
 
     most_selected_relevant = None
     for key in selected_relevant.keys():
@@ -311,6 +363,16 @@ if __name__ == "__main__":
     for node_key in my_network.keys():
         print(node_key, my_network[node_key].cpt)
         print("=======")
+
+    # ### TESTING
+    # my_network['effort_8234'].set_value(True)
+    # my_network['master_8234'].set_value(False)
+    # print(my_network['effort_8234'].create_factor())
+    # print(my_network['master_8234'].create_factor())
+    # print(my_network[hyp_key].create_factor())
+
+    ### END TESTING
+
     # Find relevant nodes
     most_relevant = find_most_frugal(my_network, hyp_key, N)
     print("The most relevant nodes are:", most_relevant)
