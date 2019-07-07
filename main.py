@@ -57,8 +57,6 @@ class Node:
         return [f'F{Node.current_factor -1}', factors]
 
 
-
-
 def create_network_structure(kcs: list, hypothesis_node_id: int) -> dict:
     """
     Create a network structure based on the available knowledge components
@@ -109,7 +107,7 @@ def create_probabilities_network(my_network, data):
     -------
     None
     """
-    print(data.tail(len(data)))
+    # print(data.tail(len(data)))
     for node_key in my_network.keys():
         if "effort" in node_key:
             node = my_network[node_key]
@@ -255,9 +253,49 @@ def process_data(data: pd.DataFrame) -> pd.DataFrame:
 
 
 def reduce_factor(factors, letter):
-    # TODO Fix reduce factor method
+    if len(factors) > 2:
+        raise NotImplementedError
+
+    if len(factors) == 2:
+        # Multiply factors with same letters
+        new_options = []
+        fac1 = factors[0]
+        for option in fac1[1]:
+            for other_option in factors[1][1]:
+                option_letters = [let for let in option[0] if letter not in let]
+                select_letter = [let for let in option[0] if letter in let][0]
+                if select_letter in other_option[0]:
+                    for other_letter in other_option[0]:
+                        if other_letter not in option_letters and \
+                                letter not in other_letter:
+                            option_letters.append(other_letter)
+                new_options.append([option_letters,
+                                    option[1] * other_option[1]])
+        mult_factor = [f'F{Node.current_factor}', new_options]
+        # print('multi_factor = ', mult_factor)
+        # Marginalize over letters
+        new_factor = [mult_factor[0], []]
+        new_letters = []
+        for new_option in new_options:
+            option_letters = new_option[0]
+            if option_letters == []:
+                continue
+            if option_letters in new_letters:
+                new_factor[1][new_letters.index(option_letters)][1] += \
+                    new_option[1]
+            else:
+                new_factor[1].append(new_option)
+                new_letters.append(option_letters)
+    elif len(factors) == 1:
+        print(factors)
+        new_factor = [[ltr for ltr in factors[0][0] if letter not in ltr] ,
+                      factors[0][1]]
+
+    else:
+        new_factor = factors
     Node.current_factor += 1
-    return([f'F{Node.current_factor}', [letter]])
+    # print("New factor:", new_factor)
+    return(new_factor)
 
 
 def find_most_frugal(my_network, hyp_node_key, N):
@@ -288,7 +326,11 @@ def find_most_frugal(my_network, hyp_node_key, N):
 
     selected_relevant = {}
     for n in range(N):
+        # set initial values
         Node.current_factor = 0
+        for node_key in my_network.keys():
+            my_network[node_key].value = None
+
         # Create random irrelevant or relevant nodes
         relevant_node_keys = []
         irrelevant_node_keys = []
@@ -300,45 +342,108 @@ def find_most_frugal(my_network, hyp_node_key, N):
                 i_node = my_network[node_key]
                 # Set random value to irrelevant node
                 i_node.set_value(choice([True, False]))
-                print(f"set node {i_node.id_} ({i_node.lid}) to "
-                      f"{i_node.value}")
+                # print(f"set node {i_node.id_} ({i_node.lid}) to "
+                #       f"{i_node.value}")
 
         # Randomly determine the evidence variables
         for node_key in evidence_node_keys:
             e_node = my_network[node_key]
             e_node.set_value(choice([True, False]))
-            print(f"set node {e_node.id_} ({e_node.lid}) to "
-                  f"{e_node.value}")
+            # print(f"set node {e_node.id_} ({e_node.lid}) to "
+            #       f"{e_node.value}")
 
+        # factorize network and do variable elimination
         factors = []
         for node_key in my_network.keys():
             factors.append(my_network[node_key].create_factor())
-        print("Starting with factors:")
-        for factor in factors:
-            print(factor)
-        for reduce_letter in "ECBDA":
+        # for factor in factors:
+        #     print(factor)
+        for reduce_letter in "ECBD":
             red_factor = []
             for factor in factors:
                 if reduce_letter in factor[1][0][0] or '~'+reduce_letter in \
                         factor[1][0][0]:
                     red_factor.append(factor)
-            factors.append(reduce_factor(red_factor, reduce_letter))
+            # print(f"Reducing factors: {[f[0] for f in red_factor]} with "
+            #       f"letter {reduce_letter}")
+            reduced = reduce_factor(red_factor, reduce_letter)
+            factors.append(reduced)
+            # Assign value if only one variable is left in the factor
+            if len(reduced[1][0][0]) == 1 and len(reduced[1]) == 2:
+                # Find the node with the correct letter
+                for node_key in my_network.keys():
+                    set_node = my_network[node_key]
+                    if set_node.lid == reduced[1][0][0][0]:
+                        # Assign value of highest probability
+                        set_node.set_value(reduced[1][0][1] >
+                                           reduced[1][1][1])
+                        # print(f"set node {set_node.id_} ({set_node.lid}) to "
+                        #       f"{set_node.value}")
+
+
+
             for factor in red_factor:
                 factors.remove(factor)
-            print(f"Reducing factors: {[f[0] for f in red_factor]}")
-            print(f"factors left: {[f[0] for f in factors]}")
+            # print(f"factors left: {[f[0] for f in factors]}")
 
-        # TODO: Determine Hmax
-        for factor in factors:
-            print(factor)
-        print("=====")
+        if len(factors) > 1:  # Should have only one factor left.
+            raise ValueError
+
+        # Determine Hmax
+        last_factor = factors[0]
+        h_values = [option[1] for option in last_factor[1]]
+        # print("h_values = ", h_values)
+        h_max = max(h_values)
+
+        # Collate truth assignment
+        jva = ""
+        for letter in "ABCDE":
+            for node_key in my_network.keys():
+                if my_network[node_key].lid == letter:
+                    if my_network[node_key].value is True:
+                        jva += 'T'
+                    else:
+                        jva += 'F'
+
+        if jva not in selected_relevant:
+            selected_relevant[jva] = [relevant_node_keys]
+            selected_relevant[f'{jva}_max'] = h_max
+        else:
+            selected_relevant[jva].append(relevant_node_keys)
+            selected_relevant[f'{jva}_max'] = \
+                max(h_max, selected_relevant[f'{jva}_max'])
 
     most_selected_relevant = None
+    h_max = 0
     for key in selected_relevant.keys():
+        if 'max' in key:
+            continue
         if most_selected_relevant is None or \
                 len(most_selected_relevant) < len(selected_relevant[key]):
             most_selected_relevant = selected_relevant[key]
+            h_max = selected_relevant[f'{key}_max']
+        elif len(most_selected_relevant) == len(selected_relevant[key]):
+            if h_max < selected_relevant[f'{key}_max']:
+                h_max = selected_relevant[f'{key}_max']
+                most_selected_relevant = selected_relevant[key]
+
     return most_selected_relevant
+
+
+def find_relevancy_level_nodes(relevant_combinations):
+    kc_totals = {}
+    for combination in relevant_combinations:
+        for kc in combination:
+            if kc not in kc_totals:
+                kc_totals[kc] = 1
+            else:
+                kc_totals[kc] += 1
+
+    relevant_levels = []
+    for key in kc_totals.keys():
+        relevant_levels.append([key,
+                                kc_totals[key]/len(relevant_combinations)])
+    return relevant_levels
 
 if __name__ == "__main__":
     # Load the data
@@ -351,28 +456,18 @@ if __name__ == "__main__":
         processed_data = pd.read_csv("./res/processed_data.csv")
 
     # Set up variables
-    hyp_id = 0
-    N = 25
     kcs = [8232, 8234, 8240]
-    hyp_key = f"master_{kcs[hyp_id]}"
+    for hyp_id in [2, 1, 0]:
+        Node.current_letter = 0
+        N = 8000
+        hyp_key = f"master_{kcs[hyp_id]}"
 
-    # Set up the network
-    my_network = create_network_structure(kcs, hyp_id)
-    create_probabilities_network(my_network, processed_data)
+        # Set up the network
+        my_network = create_network_structure(kcs, hyp_id)
+        create_probabilities_network(my_network, processed_data)
 
-    for node_key in my_network.keys():
-        print(node_key, my_network[node_key].cpt)
-        print("=======")
-
-    # ### TESTING
-    # my_network['effort_8234'].set_value(True)
-    # my_network['master_8234'].set_value(False)
-    # print(my_network['effort_8234'].create_factor())
-    # print(my_network['master_8234'].create_factor())
-    # print(my_network[hyp_key].create_factor())
-
-    ### END TESTING
-
-    # Find relevant nodes
-    most_relevant = find_most_frugal(my_network, hyp_key, N)
-    print("The most relevant nodes are:", most_relevant)
+        # Find relevant nodes
+        most_relevant = find_most_frugal(my_network, hyp_key, N)
+        relevance_levels = find_relevancy_level_nodes(most_relevant)
+        print(f"relevance levels for intermediate nodes for {hyp_key} are:",
+              relevance_levels)
