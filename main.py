@@ -253,6 +253,19 @@ def process_data(data: pd.DataFrame) -> pd.DataFrame:
 
 
 def reduce_factor(factors, letter):
+    """
+    Reduce the factors given to one factor marginalized over a given letter.
+    Parameters
+    ----------
+    factors: list of lists
+        The factors to be reduced
+    letter: str
+        letter to be marginalized
+
+    Returns
+    -------
+    The reduced factor
+    """
     if len(factors) > 2:
         raise NotImplementedError
 
@@ -431,6 +444,19 @@ def find_most_frugal(my_network, hyp_node_key, N):
 
 
 def find_relevancy_level_nodes(relevant_combinations):
+    """
+    Calculate the relevancy percentage of kc's being in the relevant
+    combination
+    Parameters
+    ----------
+    relevant_combinations: list of list of str
+        The relevant nodes per mfe result.
+
+    Returns
+    -------
+    dict
+        The relevancy percentage per kc.
+    """
     kc_totals = {}
     for combination in relevant_combinations:
         for kc in combination:
